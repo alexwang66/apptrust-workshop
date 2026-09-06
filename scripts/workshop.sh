@@ -40,9 +40,9 @@ case "${1:-}" in
     ;;
   build)
     bash scripts/test.sh
-    docker build --build-arg "APP_VERSION=$APP_VERSION" -t "$IMAGE_REF" .
-    docker run --rm --entrypoint sh "$IMAGE_REF" -c \
-      'test -s /app/lib/log4j-api-2.24.1.jar && test -s /app/lib/log4j-core-2.24.1.jar'
+    # Keep one image manifest across classic and containerd-backed Docker engines.
+    docker build --provenance=false --sbom=false --build-arg "APP_VERSION=$APP_VERSION" -t "$IMAGE_REF" .
+    bash scripts/smoke-image.sh "$IMAGE_REF"
     jf docker push "$IMAGE_REF" --project "$JF_PROJECT" --build-name "$BUILD_NAME" \
       --build-number "$APP_VERSION" --server-id "$JF_SERVER_ID"
     jf rt build-add-git "$BUILD_NAME" "$APP_VERSION" --project "$JF_PROJECT" --server-id "$JF_SERVER_ID"

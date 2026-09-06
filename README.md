@@ -145,7 +145,7 @@ Only URL and token are needed for the default lab when the existing Project, rep
 - **Pull requests:** tests only, without publishing credentials.
 - **Main push or manual run on main:** tests → application setup → build/push → Build-info → version → DEV → signed JUnit → QA gate → Xray → production environment → release.
 - Default version: `1.0.<run_number>`. Manual runs accept a new numeric SemVer. Rerunning a published version can conflict; start a new run instead.
-- Select `omit_junit=true` for the negative exercise. A configured QA gate should reject it and prevent release.
+- Select `omit_junit=true` for the negative exercise. A configured QA gate should reject it. If the platform unexpectedly accepts it, the workflow fails explicitly with a missing-policy diagnostic. Negative runs never execute release.
 - Download `junit-tests` and `release-reports` for XML, predicate, digest, and scan logs. Private keys are excluded.
 
 ## Verification and cleanup
@@ -155,7 +155,7 @@ bash scripts/test.sh
 python3 -m unittest discover -s tests -v
 bash -n scripts/*.sh
 docker build -t apptrust-workshop:local .
-docker run --rm --entrypoint sh apptrust-workshop:local -c 'ls -l /app/lib/'
+bash scripts/smoke-image.sh apptrust-workshop:local
 ```
 
 Acceptance: three HTTP tests pass; both JARs exist; the application version shows signed JUnit evidence; the configured policy rejects missing evidence; the corrected version reaches QA and release; the Docker digest is unchanged across stages.

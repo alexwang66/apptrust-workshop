@@ -78,7 +78,14 @@ jobs:
         if: ${{ !inputs.omit_junit }}
         run: bash scripts/workshop.sh evidence
       - name: Promote to QA (AppTrust policy gate)
-        run: bash scripts/workshop.sh qa
+        env:
+          OMIT_JUNIT: ${{ inputs.omit_junit || false }}
+        run: |
+          bash scripts/workshop.sh qa
+          if [ "$OMIT_JUNIT" = true ]; then
+            echo '::error::QA accepted a version without JUnit evidence. Configure a blocking AppTrust policy before using this negative exercise.'
+            exit 1
+          fi
       - name: Scan before release
         run: bash scripts/workshop.sh scan
       - uses: actions/upload-artifact@v4
@@ -91,6 +98,7 @@ jobs:
         run: rm -f "$EVIDENCE_KEY"
   release:
     needs: build-and-govern
+    if: ${{ !inputs.omit_junit }}
     runs-on: ubuntu-latest
     environment: production
     env:
