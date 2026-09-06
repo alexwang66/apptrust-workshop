@@ -41,6 +41,7 @@ def convert(report_task_path, quality_gate_path):
             'status': status,
             'conditions': conditions,
             'ignoredConditions': bool(project_status.get('ignoredConditions', False)),
+            'validationSource': quality_gate.get('validationSource', 'api'),
         },
         'analysis': {
             'projectKey': task['projectKey'],
