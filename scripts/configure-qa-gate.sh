@@ -5,9 +5,10 @@ export JFROG_CLI_USER_AGENT=${JFROG_CLI_USER_AGENT:-apptrust-codespaces-workshop
 JF_SERVER_ID=${JF_SERVER_ID:-demo}
 JF_PROJECT=${JF_PROJECT:-alex}
 APP_KEY=${APP_KEY:-alex-apptrust-workshop}
-template_name='AppTrust workshop JUnit Xray and Sonar evidence template'
-rule_name='AppTrust workshop passing JUnit Xray and Sonar evidence rule'
-policy_name='AppTrust workshop QA evidence gate with Sonar'
+template_name='AppTrust workshop JUnit Xray and Sonar evidence template v2'
+rule_name='AppTrust workshop passing JUnit Xray and Sonar evidence rule v2'
+policy_name='AppTrust workshop QA evidence gate with Sonar v2'
+superseded_policy_name='AppTrust workshop QA evidence gate with Sonar'
 work_dir=$(mktemp -d /tmp/apptrust-policy.XXXXXX)
 trap 'rm -rf "$work_dir"' EXIT
 
@@ -57,6 +58,23 @@ if [[ -z "$rule_id" ]]; then
 fi
 
 jf api '/unifiedpolicy/api/v1/policies?limit=1000' --server-id "$JF_SERVER_ID" > "$work_dir/policies.json"
+superseded_policy_id=$(jq -r --arg name "$superseded_policy_name" '.items[] | select(.name == $name and .enabled == true) | .id' "$work_dir/policies.json" | head -1)
+if [[ -n "$superseded_policy_id" ]]; then
+  jq --arg id "$superseded_policy_id" \
+    '.items[] | select(.id == $id) | {
+      name,
+      description,
+      enabled: false,
+      mode,
+      action,
+      scope,
+      rule_ids,
+      waiver_request_config
+    }' "$work_dir/policies.json" > "$work_dir/policy-disable.json"
+  jf api "/unifiedpolicy/api/v1/policies/$superseded_policy_id" -X PUT -H 'Content-Type: application/json' \
+    --input "$work_dir/policy-disable.json" --server-id "$JF_SERVER_ID" > "$work_dir/policy-disabled.json"
+fi
+
 policy_id=$(jq -r --arg name "$policy_name" '.items[] | select(.name == $name) | .id' "$work_dir/policies.json" | head -1)
 if [[ -z "$policy_id" ]]; then
   jq -n --arg name "$policy_name" --arg rule "$rule_id" --arg app "$APP_KEY" '{
