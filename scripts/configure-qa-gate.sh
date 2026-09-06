@@ -16,7 +16,7 @@ template_id=$(jq -r --arg name "$template_name" '.items[] | select(.name == $nam
 if [[ -z "$template_id" ]]; then
   jq -n --rawfile rego governance/qa-evidence-gate.rego --arg name "$template_name" '{
     name: $name,
-    description: "Require verified passing JUnit results, a verified passing JFrog Xray scan, and a verified passing SonarQube quality gate before QA entry",
+    description: "Require verified passing JUnit results, a verified passing JFrog Xray scan, and verified SonarQube scan evidence before QA entry",
     category: "quality",
     parameters: [],
     rego: $rego,
@@ -48,7 +48,7 @@ policy_id=$(jq -r --arg name "$policy_name" '.items[] | select(.name == $name) |
 if [[ -z "$policy_id" ]]; then
   jq -n --arg name "$policy_name" --arg rule "$rule_id" --arg app "$APP_KEY" '{
     name: $name,
-    description: "Block QA entry unless signed JUnit tests, Xray scan evidence, and SonarQube quality gate evidence all pass",
+    description: "Block QA entry unless signed JUnit tests, Xray scan evidence, and SonarQube scan evidence all pass",
     enabled: true,
     mode: "block",
     action: {type: "certify_to_gate", stage: {key: "QA", gate: "entry"}},

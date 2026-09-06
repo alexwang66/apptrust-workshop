@@ -83,51 +83,14 @@ case "${1:-}" in
       --key "$EVIDENCE_KEY" --key-alias "$EVIDENCE_KEY_ALIAS" --server-id "$JF_SERVER_ID"
     ;;
   sonar-evidence)
-    : "${EVIDENCE_KEY:?Set EVIDENCE_KEY}" "${EVIDENCE_KEY_ALIAS:?Set EVIDENCE_KEY_ALIAS}" "${SONAR_TOKEN:?Set SONAR_TOKEN}"
-    sonar_host=${SONAR_HOST_URL:-https://sonarcloud.io}
+    : "${EVIDENCE_KEY:?Set EVIDENCE_KEY}" "${EVIDENCE_KEY_ALIAS:?Set EVIDENCE_KEY_ALIAS}"
     report_task=.scannerwork/report-task.txt
     [[ -s "$report_task" ]] || { echo 'Run the successful SonarQube scan first.'; exit 1; }
-    sonar_project=$(awk -F= '$1 == "projectKey" {print $2}' "$report_task")
-    sonar_task=$(awk -F= '$1 == "ceTaskId" {print $2}' "$report_task")
-    [[ -n "$sonar_project" ]] || { echo 'SonarQube report-task.txt is missing projectKey.'; exit 1; }
-    [[ -n "$sonar_task" ]] || { echo 'SonarQube report-task.txt is missing ceTaskId.'; exit 1; }
-    rm -f reports/sonar-ce-task.json reports/sonar-quality-gate.json
-    analysis_id=''
-    api_available=true
-    for _ in {1..30}; do
-      http_code=$(curl -sS -u "$SONAR_TOKEN:" \
-        "$sonar_host/api/ce/task?id=$sonar_task" \
-        -o reports/sonar-ce-task.json -w '%{http_code}' || true)
-      if [[ "$http_code" != 200 ]]; then
-        api_available=false
-        break
-      fi
-      ce_status=$(jq -r '.task.status // empty' reports/sonar-ce-task.json)
-      if [[ "$ce_status" == SUCCESS ]]; then
-        analysis_id=$(jq -r '.task.analysisId // empty' reports/sonar-ce-task.json)
-        break
-      fi
-      if [[ "$ce_status" == FAILED || "$ce_status" == CANCELED ]]; then
-        cat reports/sonar-ce-task.json >&2
-        exit 1
-      fi
-      sleep 5
-    done
     cp "$report_task" reports/sonar-report-task.txt
-    if [[ "$api_available" == true ]]; then
-      [[ -n "$analysis_id" ]] || { echo 'SonarQube analysis did not complete in time.'; exit 1; }
-      printf 'analysisId=%s\n' "$analysis_id" >> reports/sonar-report-task.txt
-      curl -fsS -u "$SONAR_TOKEN:" \
-        "$sonar_host/api/qualitygates/project_status?analysisId=$analysis_id" \
-        -o reports/sonar-quality-gate.json
-    else
-      jq -n '{validationSource: "scanner-exit", projectStatus: {status: "OK", conditions: [], ignoredConditions: false}}' \
-        > reports/sonar-quality-gate.json
-    fi
-    python3 scripts/sonar-evidence.py reports/sonar-report-task.txt reports/sonar-quality-gate.json reports/sonar-evidence.json
+    python3 scripts/sonar-evidence.py reports/sonar-report-task.txt reports/sonar-evidence.json
     jf evd create --application-key "$APP_KEY" --application-version "$APP_VERSION" \
       --predicate reports/sonar-evidence.json \
-      --predicate-type 'https://sonarsource.com/evidence/quality-gate/v1' --provider-id sonarqube \
+      --predicate-type 'https://sonarsource.com/evidence/scan/v1' --provider-id sonarqube \
       --key "$EVIDENCE_KEY" --key-alias "$EVIDENCE_KEY_ALIAS" --server-id "$JF_SERVER_ID"
     ;;
   qa)

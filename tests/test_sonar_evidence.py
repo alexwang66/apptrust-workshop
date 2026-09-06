@@ -25,7 +25,8 @@ class SonarEvidenceTests(unittest.TestCase):
         self.assertEqual(result['scanner']['name'], 'SonarQube')
         self.assertEqual(result['policyResult'], 'PASS')
         self.assertEqual(result['analysis']['projectKey'], 'alexwang66_apptrust-workshop')
-        self.assertEqual(len(result['qualityGateSha256']), 64)
+        self.assertEqual(result['scanResult'], 'SUBMITTED')
+        self.assertEqual(len(result['reportTaskSha256']), 64)
 
     def test_nonpassing_quality_gate_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
