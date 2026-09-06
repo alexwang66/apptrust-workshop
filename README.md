@@ -35,7 +35,14 @@ Use a JFrog tenant with AppTrust, Evidence, and Xray enabled, and a GitHub repos
 1. Ensure the Project and Docker repositories exist. Configure the application's lifecycle with DEV, QA, and a PROD release stage, and map Docker repositories to the stages. Only the DEV repository is passed by the script; target repositories come from platform configuration.
 2. Provide a token with Docker push, Build-info, AppTrust application/version creation, promotion, evidence, and release permissions. Automatic lab signing also requires permission to register evidence public keys.
 3. Enable Xray indexing and configure the applicable Watch and policies. A CLI scan does not replace a platform release gate.
-4. For the negative exercise, configure a **QA entry gate** requiring signed evidence from DEV with provider `junit` and predicate type `http://junit.org/test-results`. Validate the trusted signer and the following fields, bind the policy to the application's lifecycle, and select a blocking action:
+4. Configure the workshop's **QA entry gate**. The supplied script creates an application-scoped blocking policy that requires verified JUnit and Xray evidence and validates their result contents:
+
+   ```bash
+   JF_SERVER_ID=demo JF_PROJECT=alex APP_KEY=alex-apptrust-workshop \
+     bash scripts/configure-qa-gate.sh
+   ```
+
+   The custom rule validates these JUnit fields:
 
    ```text
    testReport.summary.totalTests > 0
@@ -44,6 +51,8 @@ Use a JFrog tenant with AppTrust, Evidence, and Xray enabled, and a GitHub repos
    testReport.summary.totalSkipped == 0
    testReport.summary.successRate == 100
    ```
+
+   It also requires verified `https://jfrog.com/evidence/security-scan/v1` evidence from JFrog Xray with `policyResult: PASS` and an embedded JSON scan report. The script is idempotent by resource name; review existing resources before changing its names or scope.
 
 5. Configure release-gate security requirements separately. Findings depend on the current Xray database and policy; do not assume Log4j 2.24.1 always passes or triggers a particular CVE.
 6. If human approval is required, configure required reviewers under **GitHub Settings → Environments → production**. A YAML environment name alone does not enable approval. Without reviewers, release proceeds automatically after its dependencies pass.
@@ -103,20 +112,21 @@ Generate a lab key, register its public key, and attach evidence:
 # Give each learner/version a unique alias before generating a key.
 bash scripts/workshop.sh keygen
 bash scripts/workshop.sh evidence
+bash scripts/workshop.sh scan
+bash scripts/workshop.sh xray-evidence
 bash scripts/workshop.sh qa
 ```
 
 To reuse an existing trusted private key, store it at `EVIDENCE_KEY` with mode 600, configure its alias, and skip `keygen`. Never commit `.keys/` or private keys.
 
-The tests use Node's built-in test runner and its **JUnit XML reporter**, not the Java JUnit engine. The converter reads actual cases and records the XML SHA-256. Empty reports, failed/error/skipped cases, and malformed XML prevent passing evidence. Signed evidence targets the current application version and is attached in DEV before QA evaluation.
+The tests use Node's built-in test runner and its **JUnit XML reporter**, not the Java JUnit engine. The converter reads actual cases and records the XML SHA-256. Empty reports, failed/error/skipped cases, and malformed XML prevent passing evidence. The Xray predicate is only produced after `jf docker scan --fail=true` succeeds and its JSON parses. Both signed evidence records target the current application version and are attached in DEV before QA evaluation.
 
 Inspect the evidence's provider, predicate, signature identity, subject, and stage. Change a response expectation in `test/server.test.js` and run `bash scripts/test.sh` to observe a real failure. Restore it afterward. Failed tests prevent image publication and do not reuse an old evidence JSON file.
 
 ## 5. Scan and release — 15 minutes
 
 ```bash
-bash scripts/workshop.sh scan
-# Inspect reports/xray.log and platform findings before releasing.
+# Inspect reports/xray.json, reports/xray-evidence.json, and platform findings.
 bash scripts/workshop.sh release
 ```
 

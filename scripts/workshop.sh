@@ -65,8 +65,22 @@ case "${1:-}" in
       --key "$EVIDENCE_KEY" --key-alias "$EVIDENCE_KEY_ALIAS" --server-id "$JF_SERVER_ID"
     ;;
   scan)
-    # Preserve the actual scan response. Never manufacture PASS evidence from text matching.
-    jf docker scan "$IMAGE_REF" --project "$JF_PROJECT" --fail=true --server-id "$JF_SERVER_ID" 2>&1 | tee reports/xray.log
+    # A PASS predicate is created only when Xray returns valid JSON and exit status 0.
+    rm -f reports/xray.json reports/xray-evidence.json
+    if ! jf docker scan "$IMAGE_REF" --project "$JF_PROJECT" --fail=true \
+      --format simple-json --server-id "$JF_SERVER_ID" > reports/xray.json; then
+      cat reports/xray.json >&2
+      exit 1
+    fi
+    python3 scripts/xray-evidence.py reports/xray.json reports/xray-evidence.json "$IMAGE_REF" "$JF_PROJECT"
+    ;;
+  xray-evidence)
+    : "${EVIDENCE_KEY:?Set EVIDENCE_KEY}" "${EVIDENCE_KEY_ALIAS:?Set EVIDENCE_KEY_ALIAS}"
+    [[ -s reports/xray-evidence.json ]] || { echo 'Run the successful scan step first.'; exit 1; }
+    jf evd create --application-key "$APP_KEY" --application-version "$APP_VERSION" \
+      --predicate reports/xray-evidence.json \
+      --predicate-type 'https://jfrog.com/evidence/security-scan/v1' --provider-id jfrog-xray \
+      --key "$EVIDENCE_KEY" --key-alias "$EVIDENCE_KEY_ALIAS" --server-id "$JF_SERVER_ID"
     ;;
   qa)
     jf apptrust version-promote "$APP_KEY" "$APP_VERSION" "${STAGE_QA:-QA}" \
@@ -75,5 +89,5 @@ case "${1:-}" in
   release)
     jf apptrust version-release "$APP_KEY" "$APP_VERSION" --sync --server-id "$JF_SERVER_ID"
     ;;
-  *) echo 'Usage: bash scripts/workshop.sh {login|init|keygen|build|version|evidence|scan|qa|release}'; exit 2;;
+  *) echo 'Usage: bash scripts/workshop.sh {login|init|keygen|build|version|evidence|scan|xray-evidence|qa|release}'; exit 2;;
 esac

@@ -63,7 +63,6 @@ jobs:
       - run: bash scripts/workshop.sh build
       - run: bash scripts/workshop.sh version
       - name: Prepare evidence signing key
-        if: ${{ !inputs.omit_junit }}
         env:
           SIGNING_KEY: ${{ secrets.EVIDENCE_PRIVATE_KEY }}
         run: |
@@ -77,7 +76,11 @@ jobs:
       - name: Attach signed JUnit evidence in DEV
         if: ${{ !inputs.omit_junit }}
         run: bash scripts/workshop.sh evidence
-      - name: Promote to QA (AppTrust policy gate)
+      - name: Scan image with Xray
+        run: bash scripts/workshop.sh scan
+      - name: Attach signed Xray scan evidence in DEV
+        run: bash scripts/workshop.sh xray-evidence
+      - name: Promote to QA (JUnit and Xray evidence gate)
         env:
           OMIT_JUNIT: ${{ inputs.omit_junit || false }}
         run: |
@@ -86,8 +89,6 @@ jobs:
             echo '::error::QA accepted a version without JUnit evidence. Configure a blocking AppTrust policy before using this negative exercise.'
             exit 1
           fi
-      - name: Scan before release
-        run: bash scripts/workshop.sh scan
       - uses: actions/upload-artifact@v4
         if: always()
         with:
