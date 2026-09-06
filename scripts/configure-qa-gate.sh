@@ -27,6 +27,19 @@ if [[ -z "$template_id" ]]; then
   jf api /unifiedpolicy/api/v1/templates -X POST -H 'Content-Type: application/json' \
     --input "$work_dir/template-create.json" --server-id "$JF_SERVER_ID" > "$work_dir/template.json"
   template_id=$(jq -er '.id' "$work_dir/template.json")
+else
+  jq -n --rawfile rego governance/qa-evidence-gate.rego --arg name "$template_name" '{
+    name: $name,
+    description: "Require verified passing JUnit results, a verified passing JFrog Xray scan, and verified SonarQube scan evidence before QA entry",
+    category: "quality",
+    parameters: [],
+    rego: $rego,
+    scanners: [],
+    version: "1.0.0",
+    data_source_type: "evidence"
+  }' > "$work_dir/template-update.json"
+  jf api "/unifiedpolicy/api/v1/templates/$template_id" -X PUT -H 'Content-Type: application/json' \
+    --input "$work_dir/template-update.json" --server-id "$JF_SERVER_ID" > "$work_dir/template.json"
 fi
 
 jf api '/unifiedpolicy/api/v1/rules?limit=1000' --server-id "$JF_SERVER_ID" > "$work_dir/rules.json"

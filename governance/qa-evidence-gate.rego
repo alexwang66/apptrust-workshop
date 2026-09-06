@@ -32,7 +32,7 @@ valid_scan(value) if {
 junit_passed if {
     some edge in all_evidence
     node := edge.node
-    node.predicateType == "http://junit.org/test-results"
+    node.providerId == "junit"
     object.get(node, "verified", false) == true
     result := predicate(node)
     summary := result.testReport.summary
@@ -46,7 +46,7 @@ junit_passed if {
 xray_passed if {
     some edge in all_evidence
     node := edge.node
-    node.predicateType == "https://jfrog.com/evidence/security-scan/v1"
+    node.providerId == "jfrog-xray"
     object.get(node, "verified", false) == true
     result := predicate(node)
     result.scanner.name == "JFrog Xray"
@@ -57,7 +57,7 @@ xray_passed if {
 sonar_passed if {
     some edge in all_evidence
     node := edge.node
-    node.predicateType == "https://sonarsource.com/evidence/scan/v1"
+    node.providerId == "sonarqube"
     object.get(node, "verified", false) == true
     result := predicate(node)
     result.scanner.name == "SonarQube"
