@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { createServer } = require('../app/server');
 for (const [path, status, expected] of [
   ['/healthz', 200, { status: 'ok' }],
-  ['/', 200, { service: 'apptrust-workshop', version: 'local' }],
+  ['/', 200, { service: 'apptrust-workshop', version: process.env.APP_VERSION || 'local' }],
   ['/missing', 404, { error: 'Not found' }],
 ]) {
   test(`GET ${path} returns ${status}`, async (t) => {
