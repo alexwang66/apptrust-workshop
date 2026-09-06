@@ -82,6 +82,44 @@ case "${1:-}" in
       --predicate-type 'https://jfrog.com/evidence/security-scan/v1' --provider-id jfrog-xray \
       --key "$EVIDENCE_KEY" --key-alias "$EVIDENCE_KEY_ALIAS" --server-id "$JF_SERVER_ID"
     ;;
+  sonar-evidence)
+    : "${EVIDENCE_KEY:?Set EVIDENCE_KEY}" "${EVIDENCE_KEY_ALIAS:?Set EVIDENCE_KEY_ALIAS}" "${SONAR_TOKEN:?Set SONAR_TOKEN}"
+    sonar_host=${SONAR_HOST_URL:-https://sonarcloud.io}
+    report_task=.scannerwork/report-task.txt
+    [[ -s "$report_task" ]] || { echo 'Run the successful SonarQube scan first.'; exit 1; }
+    sonar_project=$(awk -F= '$1 == "projectKey" {print $2}' "$report_task")
+    sonar_task=$(awk -F= '$1 == "ceTaskId" {print $2}' "$report_task")
+    [[ -n "$sonar_project" ]] || { echo 'SonarQube report-task.txt is missing projectKey.'; exit 1; }
+    [[ -n "$sonar_task" ]] || { echo 'SonarQube report-task.txt is missing ceTaskId.'; exit 1; }
+    rm -f reports/sonar-ce-task.json reports/sonar-quality-gate.json
+    analysis_id=''
+    for _ in {1..30}; do
+      curl -fsS -u "$SONAR_TOKEN:" \
+        "$sonar_host/api/ce/task?id=$sonar_task" \
+        -o reports/sonar-ce-task.json
+      ce_status=$(jq -r '.task.status // empty' reports/sonar-ce-task.json)
+      if [[ "$ce_status" == SUCCESS ]]; then
+        analysis_id=$(jq -r '.task.analysisId // empty' reports/sonar-ce-task.json)
+        break
+      fi
+      if [[ "$ce_status" == FAILED || "$ce_status" == CANCELED ]]; then
+        cat reports/sonar-ce-task.json >&2
+        exit 1
+      fi
+      sleep 5
+    done
+    [[ -n "$analysis_id" ]] || { echo 'SonarQube analysis did not complete in time.'; exit 1; }
+    cp "$report_task" reports/sonar-report-task.txt
+    printf 'analysisId=%s\n' "$analysis_id" >> reports/sonar-report-task.txt
+    curl -fsS -u "$SONAR_TOKEN:" \
+      "$sonar_host/api/qualitygates/project_status?analysisId=$analysis_id" \
+      -o reports/sonar-quality-gate.json
+    python3 scripts/sonar-evidence.py reports/sonar-report-task.txt reports/sonar-quality-gate.json reports/sonar-evidence.json
+    jf evd create --application-key "$APP_KEY" --application-version "$APP_VERSION" \
+      --predicate reports/sonar-evidence.json \
+      --predicate-type 'https://sonarsource.com/evidence/quality-gate/v1' --provider-id sonarqube \
+      --key "$EVIDENCE_KEY" --key-alias "$EVIDENCE_KEY_ALIAS" --server-id "$JF_SERVER_ID"
+    ;;
   qa)
     jf apptrust version-promote "$APP_KEY" "$APP_VERSION" "${STAGE_QA:-QA}" \
       --promotion-type copy --sync --server-id "$JF_SERVER_ID"
@@ -89,5 +127,5 @@ case "${1:-}" in
   release)
     jf apptrust version-release "$APP_KEY" "$APP_VERSION" --sync --server-id "$JF_SERVER_ID"
     ;;
-  *) echo 'Usage: bash scripts/workshop.sh {login|init|keygen|build|version|evidence|scan|xray-evidence|qa|release}'; exit 2;;
+  *) echo 'Usage: bash scripts/workshop.sh {login|init|keygen|build|version|evidence|scan|xray-evidence|sonar-evidence|qa|release}'; exit 2;;
 esac

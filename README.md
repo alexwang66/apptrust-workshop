@@ -4,19 +4,19 @@ Build and govern a container release from your browser in 75–90 minutes:
 
 ```text
 HTTP tests → Docker image → Artifactory + Build-info → AppTrust version
-  → DEV → signed JUnit evidence → QA policy gate → Xray scan → release
+  → DEV → signed JUnit, Xray, and SonarQube evidence → QA policy gate → release
 ```
 
-This workshop follows `jfrog-sample/.github/workflows/apptrust-pipeline.yml` and `apptrust-sample/Dockerfile`: a Node HTTP service on port 3000, application versions, signed evidence, stage promotion, and a GitHub Actions release job. SonarCloud and manually constructed SLSA claims are omitted to keep the exercise self-contained.
+This workshop follows `jfrog-sample/.github/workflows/apptrust-pipeline.yml` and `apptrust-sample/Dockerfile`: a Node HTTP service on port 3000, application versions, signed evidence, stage promotion, SonarQube quality evidence, and a GitHub Actions release job.
 
 ## Learning objectives
 
 | AppTrust capability | Exercise and observable result |
 |---|---|
 | Application-centric releases | Create a version from a published Docker manifest and inspect its releasables. |
-| Signed evidence | Attach real JUnit-format results; inspect the signature, provider, predicate, subject, and stage. |
+| Signed evidence | Attach real JUnit-format results, Xray scan results, and SonarQube quality gate results; inspect the signature, provider, predicate, subject, and stage. |
 | Lifecycle governance | Promote the same version through DEV and QA without rebuilding the image. |
-| Policy enforcement | Configure a JUnit requirement, observe a missing-evidence rejection, then attach evidence and retry. |
+| Policy enforcement | Configure JUnit, Xray, and SonarQube requirements, observe missing-evidence rejection, then attach evidence and retry. |
 | Security and auditability | Inspect Xray results and the application timeline, then evaluate the release gate. |
 
 The image contains the official **Log4j API and Core 2.24.1 JARs**:
@@ -35,7 +35,7 @@ Use a JFrog tenant with AppTrust, Evidence, and Xray enabled, and a GitHub repos
 1. Ensure the Project and Docker repositories exist. Configure the application's lifecycle with DEV, QA, and a PROD release stage, and map Docker repositories to the stages. Only the DEV repository is passed by the script; target repositories come from platform configuration.
 2. Provide a token with Docker push, Build-info, AppTrust application/version creation, promotion, evidence, and release permissions. Automatic lab signing also requires permission to register evidence public keys.
 3. Enable Xray indexing and configure the applicable Watch and policies. A CLI scan does not replace a platform release gate.
-4. Configure the workshop's **QA entry gate**. The supplied script creates an application-scoped blocking policy that requires verified JUnit and Xray evidence and validates their result contents:
+4. Configure the workshop's **QA entry gate**. The supplied script creates an application-scoped blocking policy that requires verified JUnit, Xray, and SonarQube evidence and validates their result contents:
 
    ```bash
    JF_SERVER_ID=demo JF_PROJECT=alex APP_KEY=alex-apptrust-workshop \
@@ -52,7 +52,7 @@ Use a JFrog tenant with AppTrust, Evidence, and Xray enabled, and a GitHub repos
    testReport.summary.successRate == 100
    ```
 
-   It also requires verified `https://jfrog.com/evidence/security-scan/v1` evidence from JFrog Xray with `policyResult: PASS` and an embedded JSON scan report. The script is idempotent by resource name; review existing resources before changing its names or scope.
+   It also requires verified `https://jfrog.com/evidence/security-scan/v1` evidence from JFrog Xray with `policyResult: PASS` and an embedded JSON scan report. SonarQube evidence must use `https://sonarsource.com/evidence/quality-gate/v1`, include `policyResult: PASS`, and show quality gate status `OK`. The script is idempotent by resource name; review existing resources before changing its names or scope.
 
 5. Configure release-gate security requirements separately. Findings depend on the current Xray database and policy; do not assume Log4j 2.24.1 always passes or triggers a particular CVE.
 6. If human approval is required, configure required reviewers under **GitHub Settings → Environments → production**. A YAML environment name alone does not enable approval. Without reviewers, release proceeds automatically after its dependencies pass.
@@ -114,12 +114,14 @@ bash scripts/workshop.sh keygen
 bash scripts/workshop.sh evidence
 bash scripts/workshop.sh scan
 bash scripts/workshop.sh xray-evidence
+# Run the SonarQube scan first in GitHub Actions, or run sonar-scanner locally.
+bash scripts/workshop.sh sonar-evidence
 bash scripts/workshop.sh qa
 ```
 
 To reuse an existing trusted private key, store it at `EVIDENCE_KEY` with mode 600, configure its alias, and skip `keygen`. Never commit `.keys/` or private keys.
 
-The tests use Node's built-in test runner and its **JUnit XML reporter**, not the Java JUnit engine. The converter reads actual cases and records the XML SHA-256. Empty reports, failed/error/skipped cases, and malformed XML prevent passing evidence. The Xray predicate is only produced after `jf docker scan --fail=true` succeeds and its JSON parses. Both signed evidence records target the current application version and are attached in DEV before QA evaluation.
+The tests use Node's built-in test runner and its **JUnit XML reporter**, not the Java JUnit engine. The converter reads actual cases and records the XML SHA-256. Empty reports, failed/error/skipped cases, and malformed XML prevent passing evidence. The Xray predicate is only produced after `jf docker scan --fail=true` succeeds and its JSON parses. The SonarQube predicate is only produced after the scanner writes `.scannerwork/report-task.txt` and the Sonar API reports quality gate status `OK`. All signed evidence records target the current application version and are attached in DEV before QA evaluation.
 
 Inspect the evidence's provider, predicate, signature identity, subject, and stage. Change a response expectation in `test/server.test.js` and run `bash scripts/test.sh` to observe a real failure. Restore it afterward. Failed tests prevent image publication and do not reuse an old evidence JSON file.
 
@@ -147,16 +149,18 @@ The [workflow](.github/workflows/apptrust-pipeline.yml) reuses the Codespaces sc
 | Variable `APPTRUST_PROJECT` | No | `alex` |
 | Variable `APPTRUST_DOCKER_REPO_DEV` | No | `alex-docker-dev-local` |
 | Variable `APPTRUST_APP_KEY` | No | `alex-apptrust-workshop` |
+| Secret `SONAR_TOKEN` | Yes | SonarQube or SonarQube Cloud token used by the scan and quality gate evidence |
+| Variable `SONAR_HOST_URL` | No | `https://sonarcloud.io`; set this for self-managed SonarQube |
 | Secret `EVIDENCE_PRIVATE_KEY` | No | Existing trusted PEM key; otherwise generate a per-run lab key |
 | Variable `EVIDENCE_KEY_ALIAS` | With an existing key | Registered alias; otherwise a unique run/attempt alias is generated |
 
 Only URL and token are needed for the default lab when the existing Project, repositories, lifecycle, and permissions meet the prerequisites. Automatic signing follows the reference pipeline: register a per-run public key, sign evidence, then remove the private key. Retain public keys for signature verification under the instructor's retention policy. Production should use a controlled signing identity.
 
 - **Pull requests:** tests only, without publishing credentials.
-- **Main push or manual run on main:** tests → application setup → build/push → Build-info → version → DEV → signed JUnit → QA gate → Xray → production environment → release.
+- **Main push or manual run on main:** tests → application setup → build/push → Build-info → SonarQube scan → version → DEV → signed JUnit → signed Xray → signed SonarQube quality gate → QA gate → production environment → release.
 - Default version: `1.0.<run_number>`. Manual runs accept a new numeric SemVer. Rerunning a published version can conflict; start a new run instead.
-- Select `omit_junit=true` for the negative exercise. A configured QA gate should reject it. If the platform unexpectedly accepts it, the workflow fails explicitly with a missing-policy diagnostic. Negative runs never execute release.
-- Download `junit-tests` and `release-reports` for XML, predicate, digest, and scan logs. Private keys are excluded.
+- Select `omit_junit=true` or `omit_sonar=true` for a negative exercise. A configured QA gate should reject the run. If the platform unexpectedly accepts it, the workflow fails explicitly with a missing-policy diagnostic. Negative runs never execute release.
+- Download `junit-tests` and `release-reports` for XML, predicate, digest, SonarQube, and scan logs. Private keys are excluded.
 
 ## Verification and cleanup
 
@@ -168,7 +172,7 @@ docker build -t apptrust-workshop:local .
 bash scripts/smoke-image.sh apptrust-workshop:local
 ```
 
-Acceptance: three HTTP tests pass; both JARs exist; the application version shows signed JUnit evidence; the configured policy rejects missing evidence; the corrected version reaches QA and release; the Docker digest is unchanged across stages.
+Acceptance: three HTTP tests pass; both JARs exist; the application version shows signed JUnit, Xray, and SonarQube evidence; the configured policy rejects missing evidence; the corrected version reaches QA and release; the Docker digest is unchanged across stages.
 
 Troubleshooting:
 

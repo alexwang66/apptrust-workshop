@@ -5,9 +5,9 @@ export JFROG_CLI_USER_AGENT=${JFROG_CLI_USER_AGENT:-apptrust-codespaces-workshop
 JF_SERVER_ID=${JF_SERVER_ID:-demo}
 JF_PROJECT=${JF_PROJECT:-alex}
 APP_KEY=${APP_KEY:-alex-apptrust-workshop}
-template_name='AppTrust workshop JUnit and Xray evidence template'
-rule_name='AppTrust workshop passing JUnit and Xray evidence rule'
-policy_name='AppTrust workshop QA evidence gate'
+template_name='AppTrust workshop JUnit Xray and Sonar evidence template'
+rule_name='AppTrust workshop passing JUnit Xray and Sonar evidence rule'
+policy_name='AppTrust workshop QA evidence gate with Sonar'
 work_dir=$(mktemp -d /tmp/apptrust-policy.XXXXXX)
 trap 'rm -rf "$work_dir"' EXIT
 
@@ -16,7 +16,7 @@ template_id=$(jq -r --arg name "$template_name" '.items[] | select(.name == $nam
 if [[ -z "$template_id" ]]; then
   jq -n --rawfile rego governance/qa-evidence-gate.rego --arg name "$template_name" '{
     name: $name,
-    description: "Require verified passing JUnit results and a verified passing JFrog Xray scan before QA entry",
+    description: "Require verified passing JUnit results, a verified passing JFrog Xray scan, and a verified passing SonarQube quality gate before QA entry",
     category: "quality",
     parameters: [],
     rego: $rego,
@@ -34,7 +34,7 @@ rule_id=$(jq -r --arg name "$rule_name" '.items[] | select(.name == $name) | .id
 if [[ -z "$rule_id" ]]; then
   jq -n --arg name "$rule_name" --arg template "$template_id" '{
     name: $name,
-    description: "Validate the contents of signed JUnit and Xray evidence",
+    description: "Validate the contents of signed JUnit, Xray, and SonarQube evidence",
     template_id: $template,
     parameters: []
   }' > "$work_dir/rule-create.json"
@@ -48,7 +48,7 @@ policy_id=$(jq -r --arg name "$policy_name" '.items[] | select(.name == $name) |
 if [[ -z "$policy_id" ]]; then
   jq -n --arg name "$policy_name" --arg rule "$rule_id" --arg app "$APP_KEY" '{
     name: $name,
-    description: "Block QA entry unless signed JUnit tests and Xray scan evidence both pass",
+    description: "Block QA entry unless signed JUnit tests, Xray scan evidence, and SonarQube quality gate evidence all pass",
     enabled: true,
     mode: "block",
     action: {type: "certify_to_gate", stage: {key: "QA", gate: "entry"}},

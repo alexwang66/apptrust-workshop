@@ -54,13 +54,26 @@ xray_passed if {
     valid_scan(result.scan)
 }
 
+sonar_passed if {
+    some edge in all_evidence
+    node := edge.node
+    node.predicateType == "https://sonarsource.com/evidence/quality-gate/v1"
+    object.get(node, "verified", false) == true
+    result := predicate(node)
+    result.scanner.name == "SonarQube"
+    result.policyResult == "PASS"
+    result.qualityGate.status == "OK"
+    result.analysis.projectKey != ""
+}
+
 default should_allow := false
 should_allow if {
     junit_passed
     xray_passed
+    sonar_passed
 }
 
 allow := {
     "should_allow": should_allow,
-    "message": "QA requires verified passing JUnit results and verified passing JFrog Xray scan evidence",
+    "message": "QA requires verified passing JUnit results, verified passing JFrog Xray scan evidence, and verified passing SonarQube quality gate evidence",
 }
