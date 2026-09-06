@@ -26,7 +26,7 @@ The image contains the official **Log4j API and Core 2.24.1 JARs**:
 /app/lib/log4j-core-2.24.1.jar
 ```
 
-Log4j 2 publishes separate modules, not an official combined `log4j-2.24.1.jar`. The Docker build validates upstream SHA-512 checksums, and the pipeline checks both files before pushing. The Node service does not execute the JARs; they are included for component discovery and governance exercises. Component presence alone does not establish exploitability.
+Log4j 2 publishes separate modules, not an official combined `log4j-2.24.1.jar`. The Docker build validates pinned SHA-256 checksums, and the pipeline checks both files before pushing. The hashes were calculated from Maven Central JARs after checking Central's published checksums; this release does not publish `.sha512` sidecars. The Node service does not execute the JARs; they are included for component discovery and governance exercises. Component presence alone does not establish exploitability.
 
 ## 1. Instructor prerequisites
 
