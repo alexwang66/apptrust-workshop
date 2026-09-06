@@ -1,0 +1,104 @@
+name: AppTrust workshop
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      app_version:
+        description: 'New numeric SemVer (leave empty for 1.0.run_number)'
+        required: false
+        type: string
+      omit_junit:
+        description: 'Negative lab: omit evidence and observe the configured QA gate rejecting promotion'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: apptrust-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  JF_URL: ${{ vars.JFROG_URL }}
+  JF_PROJECT: ${{ vars.APPTRUST_PROJECT || 'alex' }}
+  JF_SERVER_ID: demo
+  APP_KEY: ${{ vars.APPTRUST_APP_KEY || 'alex-apptrust-workshop' }}
+  APP_VERSION: ${{ inputs.app_version || format('1.0.{0}', github.run_number) }}
+  DOCKER_REPO_DEV: ${{ vars.APPTRUST_DOCKER_REPO_DEV || 'alex-docker-dev-local' }}
+  STAGE_DEV: DEV
+  STAGE_QA: QA
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: bash scripts/test.sh
+      - run: python3 -m unittest discover -s tests -v
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-tests
+          path: reports/
+  build-and-govern:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+      EVIDENCE_KEY: ${{ github.workspace }}/.keys/evidence.key
+      EVIDENCE_KEY_ALIAS: ${{ vars.EVIDENCE_KEY_ALIAS || format('workshop-{0}-{1}', github.run_id, github.run_attempt) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: jfrog/setup-jfrog-cli@v4
+        with:
+          version: 2.122.0
+      - run: bash scripts/workshop.sh login
+      - run: bash scripts/workshop.sh init
+      - run: bash scripts/workshop.sh build
+      - run: bash scripts/workshop.sh version
+      - name: Prepare evidence signing key
+        if: ${{ !inputs.omit_junit }}
+        env:
+          SIGNING_KEY: ${{ secrets.EVIDENCE_PRIVATE_KEY }}
+        run: |
+          mkdir -p .keys
+          umask 077
+          if [ -n "$SIGNING_KEY" ]; then
+            printf '%s\n' "$SIGNING_KEY" > "$EVIDENCE_KEY"
+          else
+            bash scripts/workshop.sh keygen
+          fi
+      - name: Attach signed JUnit evidence in DEV
+        if: ${{ !inputs.omit_junit }}
+        run: bash scripts/workshop.sh evidence
+      - name: Promote to QA (AppTrust policy gate)
+        run: bash scripts/workshop.sh qa
+      - name: Scan before release
+        run: bash scripts/workshop.sh scan
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-reports
+          path: reports/
+      - name: Remove private key
+        if: always()
+        run: rm -f "$EVIDENCE_KEY"
+  release:
+    needs: build-and-govern
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jfrog/setup-jfrog-cli@v4
+        with:
+          version: 2.122.0
+      - run: bash scripts/workshop.sh login
+      - run: bash scripts/workshop.sh release
