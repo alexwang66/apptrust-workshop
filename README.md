@@ -1,186 +1,424 @@
-# AppTrust Workshop with GitHub Codespaces
+# JFrog AppTrust Workshop with GitHub Codespaces
 
-Build and govern a container release from your browser in 75–90 minutes:
+This workshop is written for JFrog customers who want to see how AppTrust governs a container release with signed evidence and lifecycle gates. You will build a small Node.js service, publish its Docker image to Artifactory, attach JUnit, JFrog Xray, and SonarQube evidence, promote the version through DEV and QA, and release it.
+
+The workshop takes about 75 to 90 minutes. Every section has a checkpoint so participants can verify progress before moving on.
 
 ```text
-HTTP tests → Docker image → Artifactory + Build-info → AppTrust version
-  → DEV → signed JUnit, Xray, and SonarQube evidence → QA policy gate → release
+Test -> Build image -> Push to Artifactory -> Create AppTrust version
+  -> Promote to DEV -> Attach signed evidence -> Pass QA gate -> Release
 ```
 
-This workshop follows `jfrog-sample/.github/workflows/apptrust-pipeline.yml` and `apptrust-sample/Dockerfile`: a Node HTTP service on port 3000, application versions, signed evidence, stage promotion, SonarQube scan evidence, and a GitHub Actions release job.
-
-## Learning objectives
-
-| AppTrust capability | Exercise and observable result |
-|---|---|
-| Application-centric releases | Create a version from a published Docker manifest and inspect its releasables. |
-| Signed evidence | Attach real JUnit-format results, Xray scan results, and SonarQube scan submission results; inspect the signature, provider, predicate, subject, and stage. |
-| Lifecycle governance | Promote the same version through DEV and QA without rebuilding the image. |
-| Policy enforcement | Configure JUnit, Xray, and SonarQube requirements, observe missing-evidence rejection, then attach evidence and retry. |
-| Security and auditability | Inspect Xray results and the application timeline, then evaluate the release gate. |
-
-The image contains the official **Log4j API and Core 2.24.1 JARs**:
+The Docker image includes these files for Xray and AppTrust inspection:
 
 ```text
 /app/lib/log4j-api-2.24.1.jar
 /app/lib/log4j-core-2.24.1.jar
 ```
 
-Log4j 2 publishes separate modules, not an official combined `log4j-2.24.1.jar`. The Docker build validates pinned SHA-256 checksums, and the pipeline checks both files before pushing. The hashes were calculated from Maven Central JARs after checking Central's published checksums; this release does not publish `.sha512` sidecars. The Node service does not execute the JARs; they are included for component discovery and governance exercises. Component presence alone does not establish exploitability.
+Log4j 2.24.1 is included as application content for component discovery and governance exercises. The Node.js service does not execute the JARs.
 
-## 1. Instructor prerequisites
+## What Participants Will Learn
 
-Use a JFrog tenant with AppTrust, Evidence, and Xray enabled, and a GitHub repository with Actions and Codespaces available. Defaults are Project `alex`, repository `alex-docker-dev-local`, and CI application `alex-apptrust-workshop`.
+| AppTrust capability | What participants do | What they should see |
+|---|---|---|
+| Application versions | Create an AppTrust version from a Docker manifest. | One version with releasables linked to the pushed image. |
+| Signed evidence | Attach JUnit, Xray, and SonarQube scan evidence. | Verified evidence records on the application version. |
+| Lifecycle governance | Promote the same version from DEV to QA. | Promotion copies the same release content without rebuilding. |
+| Policy gates | Require evidence before QA entry. | Missing evidence is rejected; complete evidence passes. |
+| Release audit trail | Release the governed version. | Timeline shows build, evidence, promotion, and release events. |
 
-1. Ensure the Project and Docker repositories exist. Configure the application's lifecycle with DEV, QA, and a PROD release stage, and map Docker repositories to the stages. Only the DEV repository is passed by the script; target repositories come from platform configuration.
-2. Provide a token with Docker push, Build-info, AppTrust application/version creation, promotion, evidence, and release permissions. Automatic lab signing also requires permission to register evidence public keys.
-3. Enable Xray indexing and configure the applicable Watch and policies. A CLI scan does not replace a platform release gate.
-4. Configure the workshop's **QA entry gate**. The supplied script creates an application-scoped blocking policy that requires verified JUnit, Xray, and SonarQube evidence and validates their result contents:
+## Environment Used by This Lab
 
-   ```bash
-   JF_SERVER_ID=demo JF_PROJECT=alex APP_KEY=alex-apptrust-workshop \
-     bash scripts/configure-qa-gate.sh
-   ```
+The default configuration is ready for the instructor environment used by this repository:
 
-   The custom rule validates these JUnit fields:
+| Setting | Default |
+|---|---|
+| JFrog Project | `alex` |
+| DEV Docker repository | `alex-docker-dev-local` |
+| AppTrust application | `alex-apptrust-workshop` |
+| DEV stage | `DEV` |
+| QA stage | `QA` |
+| SonarQube Cloud organization | `alexwang66` |
+| SonarQube project key | `alexwang66_apptrust-workshop` |
 
-   ```text
-   testReport.summary.totalTests > 0
-   testReport.summary.totalFailures == 0
-   testReport.summary.totalErrors == 0
-   testReport.summary.totalSkipped == 0
-   testReport.summary.successRate == 100
-   ```
+If you run this workshop in another tenant, update `.env`, GitHub variables, and `sonar-project.properties` before running the pipeline.
 
-   It also requires verified `https://jfrog.com/evidence/security-scan/v1` evidence from JFrog Xray with `policyResult: PASS` and an embedded JSON scan report. SonarQube evidence must use `https://sonarsource.com/evidence/scan/v1`, include `policyResult: PASS`, and include the scanner's project key and compute-engine task ID. The script is idempotent by resource name; review existing resources before changing its names or scope.
+## Instructor Setup
 
-5. Configure release-gate security requirements separately. Findings depend on the current Xray database and policy; do not assume Log4j 2.24.1 always passes or triggers a particular CVE.
-6. If human approval is required, configure required reviewers under **GitHub Settings → Environments → production**. A YAML environment name alone does not enable approval. Without reviewers, release proceeds automatically after its dependencies pass.
+Complete this once before participants start.
 
-The workflow does not create or weaken platform policies. Missing-evidence rejection requires a matching blocking policy. If promotion succeeds without evidence, inspect policy configuration rather than treating that as a successful negative test.
+1. Verify that the JFrog tenant has AppTrust, Evidence, Artifactory, and Xray enabled.
+2. Verify that Project `alex` and Docker repository `alex-docker-dev-local` exist, or update the defaults.
+3. Verify that the AppTrust lifecycle has `DEV`, `QA`, and a release stage such as `PROD`.
+4. Configure GitHub repository variables and secrets:
 
-## 2. Open a Codespace — 10 minutes
+| Name | Type | Required | Purpose |
+|---|---|---|---|
+| `JFROG_URL` | Variable | Yes | JFrog tenant root URL, for example `https://demo.jfrogchina.com` |
+| `APPTRUST_PROJECT` | Variable | No | Defaults to `alex` |
+| `APPTRUST_DOCKER_REPO_DEV` | Variable | No | Defaults to `alex-docker-dev-local` |
+| `APPTRUST_APP_KEY` | Variable | No | Defaults to `alex-apptrust-workshop` |
+| `SONAR_HOST_URL` | Variable | No | Defaults to `https://sonarcloud.io` |
+| `JF_ACCESS_TOKEN` | Secret | Yes | Token with Docker push, Build-info, AppTrust, Evidence, and release permissions |
+| `SONAR_TOKEN` | Secret | Yes | Token used by the SonarQube scan |
+| `EVIDENCE_PRIVATE_KEY` | Secret | No | Existing trusted PEM key; otherwise the pipeline creates a per-run lab key |
+| `EVIDENCE_KEY_ALIAS` | Variable | With existing key | Registered evidence key alias |
 
-Select **Code → Codespaces → Create codespace on main**. The root [devcontainer configuration](.devcontainer/devcontainer.json) provides Node 22, Docker-in-Docker, GitHub CLI, and SSH for remote verification. Its post-create script installs JFrog CLI 2.122.0.
+5. Create or update the QA entry gate:
 
-Configure `JF_ACCESS_TOKEN` as a **Codespaces secret** and grant access to this repository. Actions and Codespaces secrets are separate settings.
+```bash
+JF_SERVER_ID=demo JF_PROJECT=alex APP_KEY=alex-apptrust-workshop \
+  bash scripts/configure-qa-gate.sh
+```
+
+Checkpoint:
+
+- The command prints `QA gate ready`.
+- The policy name is `AppTrust workshop QA evidence gate with Sonar v2`.
+- The policy is enabled, blocking, scoped to `alex-apptrust-workshop`, and attached to the QA entry gate.
+
+The QA gate requires three verified evidence records on the AppTrust version:
+
+| Evidence | Provider | Predicate check |
+|---|---|---|
+| JUnit | `junit` | `totalTests > 0`, `failures = 0`, `errors = 0`, `skipped = 0`, `successRate = 100` |
+| Xray | `jfrog-xray` | scanner is `JFrog Xray`, `policyResult = PASS`, scan JSON is present |
+| SonarQube | `sonarqube` | scanner is `SonarQube`, `policyResult = PASS`, scan submission has `projectKey` and `ceTaskId` |
+
+## Participant Step 1: Open the Codespace
+
+Open GitHub and select **Code -> Codespaces -> Create codespace on main**.
+
+The dev container installs Node.js 22, Docker-in-Docker, GitHub CLI, SSH, Python, `jq`, and JFrog CLI 2.122.0.
+
+Run:
+
+```bash
+node --version
+docker version
+jf --version
+python3 --version
+jq --version
+```
+
+Checkpoint:
+
+- `node --version` starts with `v22`.
+- `docker version` returns both client and server information.
+- `jf --version` returns JFrog CLI 2.122.0 or newer.
+- `jq --version` prints a version.
+
+## Participant Step 2: Configure Local Lab Variables
+
+Create a local `.env` file:
 
 ```bash
 cp .env.example .env
-# Edit .env: set your tenant URL and a unique learner APP_KEY and APP_VERSION.
+```
+
+Edit `.env` and set:
+
+```bash
+JF_URL=https://YOUR_TENANT
+JF_PROJECT=alex
+DOCKER_REPO_DEV=alex-docker-dev-local
+APP_KEY=alex-workshop-yourname
+APP_VERSION=1.0.1
+JF_SERVER_ID=demo
+STAGE_DEV=DEV
+STAGE_QA=QA
+EVIDENCE_KEY=.keys/evidence.key
+EVIDENCE_KEY_ALIAS=workshop-yourname-1
+```
+
+Configure `JF_ACCESS_TOKEN` and `SONAR_TOKEN` as Codespaces secrets. Do not put token values in `.env`.
+
+Checkpoint:
+
+- `.env` exists locally.
+- `.env` is ignored by git.
+- `APP_KEY` is lowercase and unique for the participant.
+- `APP_VERSION` is a numeric SemVer such as `1.0.1`.
+
+## Participant Step 3: Connect to JFrog and Create the App
+
+Run:
+
+```bash
 export PATH="$HOME/.local/bin:$PATH"
 bash scripts/workshop.sh login
 bash scripts/workshop.sh init
+```
+
+Checkpoint:
+
+- `login` returns a successful AppTrust ping.
+- `init` either creates the AppTrust application or prints `Application already exists`.
+- In the JFrog UI, the application key appears under AppTrust applications.
+
+## Participant Step 4: Run the Service Locally
+
+Start the service:
+
+```bash
 npm start
 ```
 
-Open port 3000 from the Ports panel. `/healthz` returns `{"status":"ok"}`; `/` returns the service name and version. Keep the forwarded port private. Press Ctrl+C before continuing.
+Open port 3000 from the Codespaces **Ports** tab and test:
 
-`JFROG_URL` is accepted as an alias for `JF_URL`. If CLI is already configured for this tenant, set `JF_SERVER_ID` accordingly and skip `login`. `init` creates the application or accepts a specific “already exists” response; other creation failures stop the script.
+```bash
+curl http://127.0.0.1:3000/healthz
+curl http://127.0.0.1:3000/
+```
 
-## 3. Build and create an application version — 15 minutes
+Checkpoint:
+
+- `/healthz` returns `{"status":"ok"}`.
+- `/` returns the service name and version.
+- The forwarded port remains private.
+
+Stop the service with `Ctrl+C`.
+
+## Participant Step 5: Run Tests and Generate JUnit Evidence Data
+
+Run:
+
+```bash
+bash scripts/test.sh
+python3 -m unittest discover -s tests -v
+```
+
+Checkpoint:
+
+- The HTTP tests pass.
+- `reports/junit.xml` exists.
+- `reports/junit.json` exists.
+- `reports/junit.json` shows `totalTests: 3`, `totalFailures: 0`, `totalErrors: 0`, and `successRate: 100`.
+
+## Participant Step 6: Build, Validate, and Push the Docker Image
+
+Run:
 
 ```bash
 bash scripts/workshop.sh build
+```
+
+Checkpoint:
+
+- Docker build succeeds.
+- The image contains both Log4j 2.24.1 JARs under `/app/lib`.
+- `scripts/smoke-image.sh` passes.
+- The image is pushed to Artifactory.
+- Build-info is published.
+- `reports/image-digests.json` exists.
+
+In Artifactory, inspect:
+
+- Repository: `alex-docker-dev-local`
+- Image path: `<APP_KEY>:<APP_VERSION>`
+- Build name: `<APP_KEY>-build`
+- Build number: `<APP_VERSION>`
+
+## Participant Step 7: Create and Promote the AppTrust Version to DEV
+
+Run:
+
+```bash
 bash scripts/workshop.sh version
 ```
 
-The build runs three real HTTP tests and writes `reports/junit.xml` and `reports/junit.json`. It then builds the image, checks both JARs, pushes the image, and publishes Build-info with Git metadata. The image reference is:
+Checkpoint:
 
-```text
-<tenant-host>/<DEV-repository>/<APP_KEY>:<APP_VERSION>
-```
+- AppTrust version `<APP_VERSION>` exists.
+- The version has releasables linked to the Docker manifest.
+- The version is in the `DEV` stage.
+- No rebuild occurs during promotion.
 
-This example assumes Artifactory repository-path Docker routing. Adjust the reference for tenants using other routing methods.
+## Participant Step 8: Observe the QA Gate Blocking Missing Evidence
 
-In Artifactory, inspect the manifest, digest, and Build-info. In AppTrust, inspect the version's releasables. The version is created from the manifest and enters DEV; subsequent promotion and release do not rebuild it. Use a new numeric `x.y.z` version for each new build rather than overwriting a published version.
-
-## 4. Signed JUnit evidence and a negative exercise — 20 minutes
-
-With the instructor's blocking QA policy enabled, try promotion before attaching evidence:
+Run this before attaching evidence:
 
 ```bash
 bash scripts/workshop.sh qa
 ```
 
-Expect a nonzero exit and a missing-evidence explanation in AppTrust Evaluation / Timeline. If it succeeds, stop this negative exercise and fix the policy binding or warning-only action.
+Expected result:
 
-Generate a lab key, register its public key, and attach evidence:
+- The command fails.
+- The response says the copy promotion from `DEV` to `QA` failed due to policy violations.
+- The QA entry gate decision is `fail`.
+
+Checkpoint in the JFrog UI:
+
+- Open the AppTrust version.
+- Open the evaluation or timeline entry for the failed QA promotion.
+- Confirm that the blocking policy rejected the version because required evidence was missing.
+
+## Participant Step 9: Attach Signed JUnit Evidence
+
+Generate and register a lab signing key:
 
 ```bash
-# .env defines EVIDENCE_KEY and EVIDENCE_KEY_ALIAS.
-# Give each learner/version a unique alias before generating a key.
 bash scripts/workshop.sh keygen
+```
+
+Attach the JUnit evidence:
+
+```bash
 bash scripts/workshop.sh evidence
+```
+
+Checkpoint:
+
+- The public key is registered in JFrog Evidence.
+- The private key remains local under `.keys/`.
+- The AppTrust version shows verified evidence from provider `junit`.
+- The predicate contains the JUnit test summary and the SHA-256 of `reports/junit.xml`.
+
+## Participant Step 10: Run Xray and Attach Xray Evidence
+
+Run:
+
+```bash
 bash scripts/workshop.sh scan
 bash scripts/workshop.sh xray-evidence
-# Run the SonarQube scan first in GitHub Actions, or run sonar-scanner locally.
+```
+
+Checkpoint:
+
+- `reports/xray.json` exists.
+- `reports/xray-evidence.json` exists.
+- The AppTrust version shows verified evidence from provider `jfrog-xray`.
+- The predicate contains scanner `JFrog Xray`, `policyResult: PASS`, and the image reference.
+- In Xray or Artifactory, locate `log4j-api` and `log4j-core` version 2.24.1.
+
+## Participant Step 11: Run SonarQube and Attach SonarQube Evidence
+
+The GitHub Actions pipeline runs SonarQube automatically. For a local Codespaces run, install and run `sonar-scanner` if your instructor has provided local SonarQube access.
+
+After a successful SonarQube scan writes `.scannerwork/report-task.txt`, run:
+
+```bash
 bash scripts/workshop.sh sonar-evidence
+```
+
+Checkpoint:
+
+- `.scannerwork/report-task.txt` exists.
+- `reports/sonar-report-task.txt` exists.
+- `reports/sonar-evidence.json` exists.
+- The AppTrust version shows verified evidence from provider `sonarqube`.
+- The predicate contains scanner `SonarQube`, `scanResult: SUBMITTED`, `projectKey`, and `ceTaskId`.
+
+## Participant Step 12: Promote to QA
+
+Run:
+
+```bash
 bash scripts/workshop.sh qa
 ```
 
-To reuse an existing trusted private key, store it at `EVIDENCE_KEY` with mode 600, configure its alias, and skip `keygen`. Never commit `.keys/` or private keys.
+Checkpoint:
 
-The tests use Node's built-in test runner and its **JUnit XML reporter**, not the Java JUnit engine. The converter reads actual cases and records the XML SHA-256. Empty reports, failed/error/skipped cases, and malformed XML prevent passing evidence. The Xray predicate is only produced after `jf docker scan --fail=true` succeeds and its JSON parses. The SonarQube predicate is only produced after the scanner succeeds and writes `.scannerwork/report-task.txt`. All signed evidence records target the current application version and are attached in DEV before QA evaluation.
+- The promotion succeeds.
+- The QA entry gate decision is `pass`.
+- The evaluation shows the JUnit, Xray, and SonarQube evidence requirements passed.
+- The version is now in the `QA` stage.
 
-Inspect the evidence's provider, predicate, signature identity, subject, and stage. Change a response expectation in `test/server.test.js` and run `bash scripts/test.sh` to observe a real failure. Restore it afterward. Failed tests prevent image publication and do not reuse an old evidence JSON file.
+## Participant Step 13: Release the Version
 
-## 5. Scan and release — 15 minutes
+Run:
 
 ```bash
-# Inspect reports/xray.json, reports/xray-evidence.json, and platform findings.
 bash scripts/workshop.sh release
 ```
 
-In Xray, locate `log4j-api` and `log4j-core` version 2.24.1. Investigate service failures or policy violations. The script preserves nonzero scan status and does not manufacture passing security evidence from text matching.
+Checkpoint:
 
-The release operation enters the official release stage and evaluates its gate. Ordinary promotion is not a substitute; see [JFrog's release documentation](https://docs.jfrog.com/governance/docs/release-an-application-version). Inspect the final status, evaluation, timeline, target repository, and image digest.
+- The release command succeeds.
+- The version enters the configured release stage.
+- The AppTrust timeline shows release activity.
+- The release uses the same Docker digest that was promoted through DEV and QA.
 
-Manual release from Codespaces does not pass through GitHub approval. Use it only for the lab; production permissions should belong to the intended release identity.
+Manual release from Codespaces does not use GitHub environment approval. For production workflows, configure required reviewers under **GitHub Settings -> Environments -> production**.
 
-## 6. Run GitHub Actions — 15 minutes
+## GitHub Actions Path
 
-The [workflow](.github/workflows/apptrust-pipeline.yml) reuses the Codespaces scripts.
+The workflow in `.github/workflows/apptrust-pipeline.yml` runs the same workshop flow on `main`.
 
-| Setting | Required | Purpose / default |
-|---|---|---|
-| Variable `JFROG_URL` | Yes | Tenant root URL, such as `https://demo.jfrogchina.com` |
-| Secret `JF_ACCESS_TOKEN` | Yes | JFrog token |
-| Variable `APPTRUST_PROJECT` | No | `alex` |
-| Variable `APPTRUST_DOCKER_REPO_DEV` | No | `alex-docker-dev-local` |
-| Variable `APPTRUST_APP_KEY` | No | `alex-apptrust-workshop` |
-| Secret `SONAR_TOKEN` | Yes | SonarQube or SonarQube Cloud token used by the scan and evidence |
-| Variable `SONAR_HOST_URL` | No | `https://sonarcloud.io`; set this for self-managed SonarQube |
-| Secret `EVIDENCE_PRIVATE_KEY` | No | Existing trusted PEM key; otherwise generate a per-run lab key |
-| Variable `EVIDENCE_KEY_ALIAS` | With an existing key | Registered alias; otherwise a unique run/attempt alias is generated |
+Normal run:
 
-Only URL and token are needed for the default lab when the existing Project, repositories, lifecycle, and permissions meet the prerequisites. Automatic signing follows the reference pipeline: register a per-run public key, sign evidence, then remove the private key. Retain public keys for signature verification under the instructor's retention policy. Production should use a controlled signing identity.
+```text
+test -> build-and-govern -> release
+```
 
-- **Pull requests:** tests only, without publishing credentials.
-- **Main push or manual run on main:** tests → application setup → build/push → Build-info → SonarQube scan → version → DEV → signed JUnit → signed Xray → signed SonarQube scan → QA gate → production environment → release.
-- Default version: `1.0.<run_number>`. Manual runs accept a new numeric SemVer. Rerunning a published version can conflict; start a new run instead.
-- Select `omit_junit=true` or `omit_sonar=true` for a negative exercise. A configured QA gate should reject the run. If the platform unexpectedly accepts it, the workflow fails explicitly with a missing-policy diagnostic. Negative runs never execute release.
-- Download `junit-tests` and `release-reports` for XML, predicate, digest, SonarQube, and scan logs. Private keys are excluded.
+The `build-and-govern` job performs:
 
-## Verification and cleanup
+```text
+login -> init -> build -> SonarQube scan -> version -> JUnit evidence
+  -> Xray scan -> Xray evidence -> SonarQube evidence -> QA promotion
+```
+
+Checkpoint after a successful run:
+
+- GitHub Actions run conclusion is `success`.
+- `test`, `build-and-govern`, and `release` jobs are all green.
+- AppTrust version has verified JUnit, Xray, and SonarQube evidence.
+- QA promotion has `decision: pass`.
+- Release job succeeds.
+
+Negative exercises:
+
+| Input | Expected result |
+|---|---|
+| `omit_junit=true` | QA gate rejects the version; release is skipped. |
+| `omit_sonar=true` | QA gate rejects the version; release is skipped. |
+
+If a negative run reaches QA successfully, the workflow fails with a policy diagnostic. Fix the policy binding before using that exercise with participants.
+
+## Quick Verification Commands
+
+Run these before a workshop or after editing the repo:
 
 ```bash
 bash scripts/test.sh
 python3 -m unittest discover -s tests -v
 bash -n scripts/*.sh
+python3 -c "import yaml; from pathlib import Path; [yaml.safe_load(p.read_text()) for p in Path('.github/workflows').glob('*.yml')]"
 docker build -t apptrust-workshop:local .
 bash scripts/smoke-image.sh apptrust-workshop:local
 ```
 
-Acceptance: three HTTP tests pass; both JARs exist; the application version shows signed JUnit, Xray, and SonarQube evidence; the configured policy rejects missing evidence; the corrected version reaches QA and release; the Docker digest is unchanged across stages.
+Checkpoint:
 
-Troubleshooting:
+- Three HTTP tests pass.
+- Python converter tests pass.
+- Shell scripts parse.
+- GitHub workflow YAML parses.
+- Docker build and smoke test pass.
 
-- Docker unavailable: rebuild the Codespace and inspect Docker feature logs.
-- Registry connection errors: check Docker Hub, Alpine repositories, Maven Central, and JFrog CLI release connectivity.
-- 401/403: check the same tenant's token and permissions; do not switch tenants as a workaround.
-- Evidence target not ready: inspect version creation status, then retry attachment after completion.
-- Unexpected promotion success: inspect policy binding, source stage, and blocking action.
-- Release waiting in GitHub: inspect production environment approval requirements.
+## Troubleshooting
 
-Stop the Codespace when finished and delete it when no longer needed. Remove local private keys and revoke temporary tokens as instructed. Retain platform artifacts, evidence, and public keys under the organization's audit policy.
+| Symptom | Check |
+|---|---|
+| Docker is unavailable | Rebuild the Codespace and inspect Docker-in-Docker startup logs. |
+| `jf` is missing | Run `bash scripts/bootstrap.sh` and reopen the shell. |
+| `401` or `403` from JFrog | Check the token belongs to the same tenant and has AppTrust, Evidence, Docker, Build-info, and release permissions. |
+| App creation fails | Check `APP_KEY`, project membership, and application permissions. |
+| Image push fails | Check Docker repository permissions and repository path routing. |
+| Xray scan fails | Check Xray indexing, watches, policies, and CLI scan output in `reports/xray.json`. |
+| SonarQube scan fails | Check `SONAR_TOKEN`, `SONAR_HOST_URL`, `sonar.organization`, and `sonar.projectKey`. |
+| Evidence upload fails | Confirm the AppTrust version exists and the signing key alias is registered. |
+| QA promotion unexpectedly passes without evidence | Check the QA entry policy scope, mode, action, and application key. |
+| Release waits in GitHub | Check required reviewers in the `production` environment. |
+
+## Cleanup
+
+At the end of the workshop:
+
+```bash
+rm -rf .keys reports .scannerwork
+```
+
+Stop or delete the Codespace when finished. Retain JFrog evidence, release history, and public signing keys according to your organization's audit policy.
